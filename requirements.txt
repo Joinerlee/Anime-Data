@@ -1,0 +1,33 @@
+# 애니메이션 추천 시스템 의존성
+
+# 데이터 처리
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 머신러닝 및 임베딩
+scikit-learn>=1.3.0
+scipy>=1.10.0
+
+# Kanana 임베딩 모델 (카카오)
+torch>=2.0.0
+transformers>=4.35.0
+tokenizers>=0.14.0
+
+# API 서버 (FastAPI)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# 유틸리티
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+
+# 선택적 의존성 (개발/테스트용)
+# pytest>=7.4.0
+# jupyter>=1.0.0
+# matplotlib>=3.7.0
+# seaborn>=0.12.0
+
+# GPU 지원 (선택사항)
+# torch-audio  # GPU 사용시 필요할 수 있음
+# torchvision  # 추가 유틸리티
