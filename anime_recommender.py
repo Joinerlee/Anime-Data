@@ -31,8 +31,8 @@ class KananaEmbeddingModel:
         if self.use_kanana:
             try:
                 print(f"Loading Kanana embedding model... ({model_name})")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-                self.model = AutoModel.from_pretrained(model_name)
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
                 self.model.to(self.device)
                 self.model.eval()
                 print(f"Kanana model loaded successfully (Device: {self.device})")
@@ -569,7 +569,7 @@ class AnimeRecommendationSystem:
         if not reasons:
             reasons.append("시청 이력 기반 추천")
 
-        return " • ".join(reasons[:3])  # 최대 3개 이유만 표시
+        return " | ".join(reasons[:3])  # 최대 3개 이유만 표시
     
     def hybrid_recommend(self, user_id, n_recommendations=10, content_weight=0.6, collaborative_weight=0.4):
         """개선된 하이브리드 추천 (콘텐츠 기반 + 사용자 선호도 기반)"""
