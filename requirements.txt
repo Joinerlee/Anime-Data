@@ -22,6 +22,11 @@ pydantic>=2.5.0
 python-multipart>=0.0.6
 python-jose[cryptography]>=3.3.0
 
+# Redis 및 백그라운드 작업
+redis>=5.0.0
+celery>=5.3.0
+requests>=2.31.0
+
 # 선택적 의존성 (개발/테스트용)
 # pytest>=7.4.0
 # jupyter>=1.0.0
