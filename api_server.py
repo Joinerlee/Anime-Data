@@ -54,9 +54,7 @@ class UserProfileRequest(BaseModel):
     watched_anime: List[int]
     ratings: Optional[List[float]] = None
 
-class UserRatingProfileRequest(BaseModel):
-    user_id: str
-    anime_ratings: Dict[int, float]  # {anime_id: rating} 형태로 개선된 요청
+# 평점 기반 프로필 요청 모델 제거 - liked/disliked만 사용
 
 class RecommendationRequest(BaseModel):
     user_id: str
@@ -102,9 +100,7 @@ class UserLikesDislikesUpdate(BaseModel):
     liked_anime_ids: List[int]
     disliked_anime_ids: List[int]
 
-class UserRatingUpdate(BaseModel):
-    user_id: str
-    anime_ratings: Dict[int, float]  # {anime_id: rating} 형태
+# 평점 기반 모델 제거 - liked/disliked만 사용
 
 class BatchUpdateRequest(BaseModel):
     updated_user_profiles: List[UserLikesDislikesUpdate]
@@ -322,40 +318,34 @@ async def create_user_profile(
         logger.error(f"사용자 프로필 생성 오류: {str(e)}")
         raise HTTPException(status_code=500, detail="프로필 생성 중 오류가 발생했습니다.")
 
-@app.post("/api/user/profile-ratings")
-async def create_user_profile_with_ratings(
-    request: UserRatingProfileRequest,
+@app.post("/api/user/profile-likes")
+async def create_user_profile_with_likes(
+    request: UserLikesDislikesUpdate,
     rec: AnimeRecommendationSystem = Depends(get_recommender)
 ):
-    """사용자 프로필 생성 (평점 기반 - 추천)"""
+    """사용자 프로필 생성 (liked/disliked 기반 - 백엔드 연동용)"""
     try:
-        if not request.anime_ratings:
-            raise HTTPException(status_code=400, detail="애니메이션 평점 데이터가 필요합니다.")
+        if not request.liked_anime_ids and not request.disliked_anime_ids:
+            raise HTTPException(status_code=400, detail="좋아요 또는 싫어요 데이터가 필요합니다.")
 
-        # Dict를 List로 변환
-        watched_anime = list(request.anime_ratings.keys())
-        ratings = list(request.anime_ratings.values())
+        # liked/disliked를 rating으로 변환
+        watched_anime = request.liked_anime_ids + request.disliked_anime_ids
+        ratings = ([4.5] * len(request.liked_anime_ids) +
+                  [1.5] * len(request.disliked_anime_ids))
 
-        # 평점 범위 검증 (1.0-5.0)
-        if any(rating < 1.0 or rating > 5.0 for rating in ratings):
-            raise HTTPException(status_code=400, detail="평점은 1.0-5.0 범위여야 합니다.")
+        logger.info(f"사용자 {request.user_id}: 좋아요 {len(request.liked_anime_ids)}개, 싫어요 {len(request.disliked_anime_ids)}개")
 
         # 사용자 프로필 생성
         profile = rec.create_user_profile(request.user_id, watched_anime, ratings)
 
         return {
-            "message": "사용자 프로필이 생성되었습니다. (평점 기반)",
+            "message": "사용자 프로필이 생성되었습니다. (liked/disliked 기반)",
             "profile": {
                 "user_id": profile['user_id'],
                 "watched_count": len(profile['watched_anime']),
+                "liked_count": len(request.liked_anime_ids),
+                "disliked_count": len(request.disliked_anime_ids),
                 "avg_rating": profile['preferences']['avg_rating'],
-                "rating_distribution": {
-                    "5.0": sum(1 for r in ratings if r >= 4.5),
-                    "4.0": sum(1 for r in ratings if 3.5 <= r < 4.5),
-                    "3.0": sum(1 for r in ratings if 2.5 <= r < 3.5),
-                    "2.0": sum(1 for r in ratings if 1.5 <= r < 2.5),
-                    "1.0": sum(1 for r in ratings if r < 1.5)
-                },
                 "top_genres": list(profile['preferences']['genre_preferences'].items())[:5],
                 "top_tags": list(profile['preferences']['tag_preferences'].items())[:5]
             }
@@ -825,8 +815,8 @@ if __name__ == '__main__':
     print("\nBasic endpoints:")
     print("  GET  /health - Server status")
     print("  GET  /api/anime/search?q=query - Search anime")
-    print("  POST /api/user/profile - 사용자 프로필 생성")
-    print("  POST /api/user/profile-ratings - 사용자 프로필 생성 (평점 기반)")
+    print("  POST /api/user/profile - 사용자 프로필 생성 (Legacy)")
+    print("  POST /api/user/profile-likes - 사용자 프로필 생성 (liked/disliked 기반)")
     print("  POST /api/recommend - 통합 추천 API (메인)")
     print("  POST /api/recommend/content - 콘텐츠 기반 추천 (Legacy)")
     print("  POST /api/recommend/collaborative - 협업 필터링 추천 (Legacy)")
