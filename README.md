@@ -18,32 +18,65 @@
 ## 🛠️ 기술 스택
 
 - **Backend**: Python 3.8+
+- **Database**: PostgreSQL + pgvector (메인 DB)
 - **ML/AI**: scikit-learn, numpy, pandas
 - **API Framework**: FastAPI
-- **임베딩**: 카카오 Kanana 2.1B 모델 (kakaocorp/kanana-nano-2.1b-embedding)
+- **임베딩**: 카카오 Kanana 2.1B 모델 (온디맨드 로딩)
 - **Fallback 임베딩**: TF-IDF + SVD
 - **딥러닝**: PyTorch, Transformers (Hugging Face)
-- **유사도 계산**: Cosine Similarity
-- **캐싱**: Redis
-- **백그라운드 작업**: FastAPI BackgroundTasks
+- **유사도 계산**: pgvector Cosine Similarity (고속 검색)
+- **캐싱**: Redis + PostgreSQL 임베딩 캐시
+- **백그라운드 작업**: FastAPI BackgroundTasks + Scheduled Jobs
 - **외부 연동**: HTTP Requests (Spring Server)
 
 ## 📦 설치 및 실행
 
-### 1. 의존성 설치
+### 1. 시스템 요구사항
+- **PostgreSQL 14+** (pgvector 확장 지원)
+- **Redis 6+** (캐싱용)
+- **Python 3.8+**
+
+### 2. PostgreSQL + pgvector 설치
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+sudo apt install postgresql-14-pgvector
+
+# 또는 Docker 사용
+docker run --name postgres-pgvector \
+  -e POSTGRES_PASSWORD=your_password \
+  -p 5432:5432 \
+  -d pgvector/pgvector:pg14
+```
+
+### 3. 의존성 설치
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 데이터 준비
-CSV 파일 `anilife_data_20250915_214030.csv`가 프로젝트 루트에 있어야 합니다.
-
-### 3. 데모 실행
+### 4. 환경 설정
 ```bash
-python demo.py
+# .env 파일 생성 (.env.example 참고)
+cp .env.example .env
+
+# 데이터베이스 설정 수정
+DB_HOST=localhost
+DB_NAME=anime_recommendation_db
+DB_USERNAME=postgres
+DB_PASSWORD=your_password
 ```
 
-### 4. API 서버 실행
+### 5. 데이터베이스 초기화
+```bash
+# 데이터베이스 및 테이블 생성
+python database.py
+
+# 샘플 데이터 생성 (선택사항)
+python models.py
+```
+
+### 6. API 서버 실행
 ```bash
 python api_server.py
 ```
@@ -53,82 +86,95 @@ python api_server.py
 - API 문서: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
+### 7. Spring 서버와 연동
+```bash
+# Spring 서버에서 애니메이션 데이터 동기화
+curl -X POST "http://localhost:8000/api/internal/sync/animations" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# 유저 취향 데이터는 매일 12시 자동 동기화됨
+```
+
 ## 🔧 API 사용법
 
-### 1. 사용자 프로필 생성
+### 🎯 메인 추천 API (Spring 연동)
+
+#### 1. 개인화 추천 받기
 ```bash
-curl -X POST "http://localhost:8000/api/user/profile" \
+curl -X POST "http://localhost:8000/api/recommend" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user123",
-    "watched_anime": [129, 102, 116],
-    "ratings": [5.0, 4.5, 4.8]
+    "liked_anime_ids": [129, 102, 116],
+    "disliked_anime_ids": [88, 201],
+    "n_recommendations": 10
   }'
 ```
 
-### 2. 하이브리드 추천 받기
+#### 2. 의미론적 검색 (pgvector 기반)
 ```bash
-curl -X POST "http://localhost:8000/api/recommend/hybrid" \
+curl -X POST "http://localhost:8000/api/search/semantic" \
   -H "Content-Type: application/json" \
   -d '{
-    "user_id": "user123",
-    "n_recommendations": 5
+    "query": "액션과 우정이 있는 애니메이션",
+    "limit": 10
   }'
 ```
 
-### 3. 애니메이션 검색
+#### 3. 텍스트 검색
 ```bash
-curl "http://localhost:8000/api/anime/search?q=스파이&limit=5"
+curl "http://localhost:8000/api/search?q=스파이 패밀리&limit=5"
 ```
 
-### 4. 트렌딩 애니메이션
+#### 4. 트렌딩 애니메이션
 ```bash
 curl "http://localhost:8000/api/trending?year_start=2020&year_end=2025&limit=10"
 ```
 
-### 🆕 새로운 API 엔드포인트
+### 🔄 Spring 서버 연동 API
 
-#### 5. 배치 추천 작업 시작
+#### 5. 애니메이션 데이터 동기화 (Spring → FastAPI)
 ```bash
-curl -X POST "http://localhost:8000/api/recommendations/trigger-batch-update" \
+curl -X POST "http://localhost:8000/api/internal/animations/sync" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "updated_user_profiles": [
+    "type": "new_animations",
+    "animation_ids": [12345, 12346, 12347]
+  }'
+```
+
+#### 6. 사용자 취향 업데이트 (Spring → FastAPI)
+```bash
+curl -X POST "http://localhost:8000/api/internal/users/sync" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_preferences": [
       {
-        "user_id": "user-A",
+        "user_id": "user123",
         "liked_anime_ids": [1, 2, 3],
         "disliked_anime_ids": [4, 5]
-      },
-      {
-        "user_id": "user-B",
-        "liked_anime_ids": [6, 7, 8],
-        "disliked_anime_ids": [9, 10]
       }
     ]
   }'
 ```
 
-#### 6. 신규 애니메이션 추가
+### 📊 모니터링 & 관리 API
+
+#### 7. 동기화 상태 확인
 ```bash
-curl -X POST "http://localhost:8000/api/animations" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title_korean": "나 혼자만 레벨업",
-    "title_japanese": "俺だけレベルアップな件",
-    "year": 2024,
-    "genres": ["액션", "판타지"],
-    "synopsis": "인류 최약체 병기로 불리던 성진우가 각성하여 최강의 헌터로 성장하는 이야기."
-  }'
+curl "http://localhost:8000/api/internal/sync/status"
 ```
 
-#### 7. 전체 추천 갱신 트리거
+#### 8. 임베딩 벡터 상태 확인
 ```bash
-curl -X POST "http://localhost:8000/api/recommendations/trigger-global-update"
+curl "http://localhost:8000/api/internal/embeddings/stats"
 ```
 
-#### 8. 사용자별 추천 목록 조회 (Redis)
+#### 9. 데이터베이스 헬스체크
 ```bash
-curl "http://localhost:8000/api/recommendations/user123"
+curl "http://localhost:8000/health"
 ```
 
 ### 🆕 향상된 추천 응답 형식
@@ -229,28 +275,47 @@ curl "http://localhost:8000/api/recommendations/user123"
 
 ## 🏗️ 시스템 아키텍처
 
-### 전체 구조
+### 전체 구조 (Spring 연동 아키텍처)
 ```mermaid
 graph TB
-    A[Client/Frontend] --> B[FastAPI Server]
-    B --> C[AnimeRecommendationSystem]
-    C --> D[Kanana Embedding Model]
-    C --> E[User Profile Manager]
-    C --> F[Hybrid Recommender]
+    A[Spring Boot Server<br/>메인 유저 관리] --> B[FastAPI Recommendation Service<br/>추천 및 검색 전용]
 
-    F --> G[Content-Based Filter]
-    F --> H[Collaborative Filter]
+    B --> C[PostgreSQL + pgvector<br/>메인 데이터베이스]
+    B --> D[Redis Cache<br/>추천 결과 캐싱]
 
-    G --> I[Kanana/TF-IDF Vectorizer]
-    H --> J[Item-Item Similarity]
+    C --> E[Animation Table<br/>임베딩 벡터 포함]
+    C --> F[UserPreference Table<br/>liked/disliked 데이터]
+    C --> G[Recommendation Cache<br/>생성된 추천 결과]
 
-    B --> K[Redis Cache]
-    B --> L[Background Tasks]
-    L --> M[Spring Server Callback]
+    B --> H[Kanana Embedding Engine<br/>카카오 2.1B 모델]
+    B --> I[Hybrid Recommender<br/>콘텐츠+협업 필터링]
 
-    N[CSV Data] --> C
-    O[User Interactions] --> E
+    I --> J[Content-Based Filter<br/>pgvector 유사도 검색]
+    I --> K[Collaborative Filter<br/>사용자 패턴 분석]
+
+    A --> |liked/disliked 데이터| B
+    B --> |추천 결과 콜백| A
+
+    L[클라이언트] --> A
+    L --> |직접 검색 요청| B
 ```
+
+### 🔄 서비스 역할 분담
+
+#### Spring Boot Server (메인 서버)
+- **사용자 관리**: 회원가입, 로그인, 프로필 관리
+- **평점 관리**: 사용자의 애니메이션 좋아요/싫어요 데이터
+- **비즈니스 로직**: 메인 애플리케이션 로직 및 UI
+- **데이터 동기화**: 사용자 선호도 변경시 추천 서비스에 업데이트 요청
+
+#### FastAPI Recommendation Service (추천 서비스)
+- **추천 생성**: 하이브리드 알고리즘 기반 개인화 추천
+- **검색 기능**: 의미론적 검색 및 텍스트 검색
+- **임베딩 처리**:
+  - **기존 데이터**: 사전 계산된 임베딩 벡터 사용 (DB 저장)
+  - **신규 데이터**: Spring 플래그 신호시에만 Kanana 모델 로딩하여 임베딩
+  - **스케줄 업데이트**: 매일 12시 자동 임베딩 업데이트 (Spring 트리거)
+- **성능 최적화**: pgvector를 활용한 고속 유사도 검색
 
 ### 핵심 컴포넌트
 
@@ -278,25 +343,36 @@ graph TB
 - **분석**: 장르/태그 선호도, 시청 패턴 추출
 - **저장**: 메모리 및 Redis 캐시
 
-### 데이터 플로우
+### 📈 데이터 플로우
 
-#### 추천 생성 과정
+#### 추천 생성 과정 (pgvector 기반)
 ```
-1. User Request → 2. Profile Lookup → 3. Hybrid Algorithm
-                                        ↓
-4. Content Filter ←→ 5. Collaborative Filter
-   (Kanana Embedding)    (Item Similarity)
-                                        ↓
-6. Score Combination → 7. Diversity Filter → 8. Final Ranking
+1. User Request → 2. PostgreSQL 프로필 조회 → 3. 하이브리드 알고리즘
+                                               ↓
+4. 콘텐츠 기반 필터 ←→ 5. 협업 필터링
+   (pgvector 유사도 검색)    (사용자 패턴 분석)
+                                               ↓
+6. 점수 결합 → 7. 다양성 필터 → 8. 최종 랭킹 → 9. Redis 캐싱
 ```
 
-#### 배치 처리 과정
+#### Spring 연동 플로우
 ```
-1. Spring Server → 2. Batch Request → 3. Background Task
-                                        ↓
-4. Process Users → 5. Generate Recommendations → 6. Redis Storage
-                                        ↓
-7. Callback to Spring ← 8. Job Status Update
+🔄 일일 업데이트 (매일 12시)
+Spring Server → 사용자 취향 데이터 → FastAPI → PostgreSQL 업데이트
+
+⚡ 실시간 플래그 (신규 애니메이션)
+Spring Server → 플래그 신호 → FastAPI → Kanana 임베딩 → PostgreSQL 저장
+
+📊 추천 요청
+클라이언트 → Spring Server → FastAPI → pgvector 검색 → 추천 결과 반환
+```
+
+#### 임베딩 관리 전략
+```
+✅ 기존 애니메이션: 사전 계산된 벡터 (DB 저장)
+🆕 신규 애니메이션: Spring 플래그 → 온디맨드 Kanana 로딩 → 임베딩 생성
+🔄 정기 업데이트: 매일 12시 사용자 취향 분석 및 프로필 벡터 갱신
+⚡ 실시간 검색: pgvector 코사인 유사도로 고속 검색
 ```
 
 ### 성능 최적화
