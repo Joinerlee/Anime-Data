@@ -2,8 +2,9 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import TruncatedSVD
+from sklearn.decomposition import TruncatedSVD, NMF
 from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
 import pickle
 import json
 import re
@@ -122,10 +123,17 @@ class AnimeRecommendationSystem:
         # Kanana 임베딩 모델 초기화
         self.embedding_model = KananaEmbeddingModel(use_kanana=use_kanana)
         self.use_kanana = self.embedding_model.use_kanana
-        
+
         # TF-IDF는 fallback용으로만 사용
         if not self.use_kanana:
             self.tfidf_vectorizer = None
+
+        # 새로운 추천 알고리즘을 위한 변수들
+        self.user_item_matrix = None
+        self.svd_collaborative = None
+        self.nmf_model = None
+        self.knn_model = None
+        self.popularity_scores = None
         
     def load_data(self, csv_path):
         """CSV 데이터 로드 및 전처리"""
@@ -207,7 +215,7 @@ class AnimeRecommendationSystem:
     def create_user_profile(self, user_id, watched_anime_ids, ratings=None):
         """유저 시청 이력을 기반으로 프로필 생성"""
         if ratings is None:
-            ratings = [5.0] * len(watched_anime_ids)
+            ratings = [3.0] * len(watched_anime_ids)  # 기본 평점을 중간값으로 변경
         
         user_profile = {
             'user_id': user_id,
@@ -323,8 +331,8 @@ class AnimeRecommendationSystem:
         genre_prefs = user_profile['preferences']['genre_preferences']
         tag_prefs = user_profile['preferences']['tag_preferences']
 
-        # 사용자가 좋아할 만한 애니메이션 찾기 (평점 4.0 이상 시청작 기준)
-        liked_anime = [anime_id for anime_id, rating in user_ratings.items() if rating >= 4.0]
+        # 사용자가 좋아할 만한 애니메이션 찾기 (평점 3.5 이상 시청작 기준)
+        liked_anime = [anime_id for anime_id, rating in user_ratings.items() if rating >= 3.5]
         liked_indices = []
 
         for anime_id in liked_anime:

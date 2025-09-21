@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # FastAPI 앱 초기화
 app = FastAPI(
-    title="애니메이션 추천 API",
-    description="임베딩 기반 애니메이션 추천 시스템",
+    title="애니메이션 추천 API (통합)",
+    description="하이브리드 방식으로 통합된 애니메이션 추천 시스템",
     version="1.0.0"
 )
 
@@ -53,6 +53,10 @@ class UserProfileRequest(BaseModel):
     user_id: str
     watched_anime: List[int]
     ratings: Optional[List[float]] = None
+
+class UserRatingProfileRequest(BaseModel):
+    user_id: str
+    anime_ratings: Dict[int, float]  # {anime_id: rating} 형태로 개선된 요청
 
 class RecommendationRequest(BaseModel):
     user_id: str
@@ -97,6 +101,10 @@ class UserLikesDislikesUpdate(BaseModel):
     user_id: str
     liked_anime_ids: List[int]
     disliked_anime_ids: List[int]
+
+class UserRatingUpdate(BaseModel):
+    user_id: str
+    anime_ratings: Dict[int, float]  # {anime_id: rating} 형태
 
 class BatchUpdateRequest(BaseModel):
     updated_user_profiles: List[UserLikesDislikesUpdate]
@@ -284,21 +292,21 @@ async def create_user_profile(
     request: UserProfileRequest,
     rec: AnimeRecommendationSystem = Depends(get_recommender)
 ):
-    """사용자 프로필 생성"""
+    """사용자 프로필 생성 (Legacy - 리스트 기반)"""
     try:
         if not request.watched_anime:
             raise HTTPException(status_code=400, detail="시청한 애니메이션 목록이 필요합니다.")
-        
+
         # 평점이 제공되지 않은 경우 기본값 사용
         ratings = request.ratings
         if not ratings:
-            ratings = [5.0] * len(request.watched_anime)
+            ratings = [3.0] * len(request.watched_anime)  # 기본 평점 3.0
         elif len(ratings) != len(request.watched_anime):
             raise HTTPException(status_code=400, detail="시청한 애니메이션 수와 평점 수가 일치하지 않습니다.")
-        
+
         # 사용자 프로필 생성
         profile = rec.create_user_profile(request.user_id, request.watched_anime, ratings)
-        
+
         return {
             "message": "사용자 프로필이 생성되었습니다.",
             "profile": {
@@ -309,7 +317,50 @@ async def create_user_profile(
                 "top_tags": list(profile['preferences']['tag_preferences'].items())[:5]
             }
         }
-        
+
+    except Exception as e:
+        logger.error(f"사용자 프로필 생성 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail="프로필 생성 중 오류가 발생했습니다.")
+
+@app.post("/api/user/profile-ratings")
+async def create_user_profile_with_ratings(
+    request: UserRatingProfileRequest,
+    rec: AnimeRecommendationSystem = Depends(get_recommender)
+):
+    """사용자 프로필 생성 (평점 기반 - 추천)"""
+    try:
+        if not request.anime_ratings:
+            raise HTTPException(status_code=400, detail="애니메이션 평점 데이터가 필요합니다.")
+
+        # Dict를 List로 변환
+        watched_anime = list(request.anime_ratings.keys())
+        ratings = list(request.anime_ratings.values())
+
+        # 평점 범위 검증 (1.0-5.0)
+        if any(rating < 1.0 or rating > 5.0 for rating in ratings):
+            raise HTTPException(status_code=400, detail="평점은 1.0-5.0 범위여야 합니다.")
+
+        # 사용자 프로필 생성
+        profile = rec.create_user_profile(request.user_id, watched_anime, ratings)
+
+        return {
+            "message": "사용자 프로필이 생성되었습니다. (평점 기반)",
+            "profile": {
+                "user_id": profile['user_id'],
+                "watched_count": len(profile['watched_anime']),
+                "avg_rating": profile['preferences']['avg_rating'],
+                "rating_distribution": {
+                    "5.0": sum(1 for r in ratings if r >= 4.5),
+                    "4.0": sum(1 for r in ratings if 3.5 <= r < 4.5),
+                    "3.0": sum(1 for r in ratings if 2.5 <= r < 3.5),
+                    "2.0": sum(1 for r in ratings if 1.5 <= r < 2.5),
+                    "1.0": sum(1 for r in ratings if r < 1.5)
+                },
+                "top_genres": list(profile['preferences']['genre_preferences'].items())[:5],
+                "top_tags": list(profile['preferences']['tag_preferences'].items())[:5]
+            }
+        }
+
     except Exception as e:
         logger.error(f"사용자 프로필 생성 오류: {str(e)}")
         raise HTTPException(status_code=500, detail="프로필 생성 중 오류가 발생했습니다.")
@@ -493,10 +544,10 @@ async def process_batch_recommendations(job_id: str, user_updates: List[UserLike
                     failed_users.append(user_id)
                     continue
 
-                # 좋아요/싫어요를 기반으로 새로운 평점 생성
+                # 좋아요/싫어요를 rating으로 변환 (좋아요=4.5, 싫어요=1.5)
                 watched_anime = user_update.liked_anime_ids + user_update.disliked_anime_ids
-                ratings = ([5.0] * len(user_update.liked_anime_ids) +
-                          [1.0] * len(user_update.disliked_anime_ids))
+                ratings = ([4.5] * len(user_update.liked_anime_ids) +
+                          [1.5] * len(user_update.disliked_anime_ids))
 
                 logger.debug(f"사용자 {user_id}: 좋아요 {len(user_update.liked_anime_ids)}개, 싫어요 {len(user_update.disliked_anime_ids)}개")
 
@@ -775,9 +826,11 @@ if __name__ == '__main__':
     print("  GET  /health - Server status")
     print("  GET  /api/anime/search?q=query - Search anime")
     print("  POST /api/user/profile - 사용자 프로필 생성")
-    print("  POST /api/recommend/content - 콘텐츠 기반 추천")
-    print("  POST /api/recommend/collaborative - 협업 필터링 추천")
-    print("  POST /api/recommend/hybrid - 하이브리드 추천")
+    print("  POST /api/user/profile-ratings - 사용자 프로필 생성 (평점 기반)")
+    print("  POST /api/recommend - 통합 추천 API (메인)")
+    print("  POST /api/recommend/content - 콘텐츠 기반 추천 (Legacy)")
+    print("  POST /api/recommend/collaborative - 협업 필터링 추천 (Legacy)")
+    print("  POST /api/recommend/hybrid - 하이브리드 추천 (Legacy)")
     print("  GET  /api/trending - 트렌딩 애니메이션")
     print("  GET  /api/user/{user_id}/profile - 사용자 프로필 조회")
     print("  GET  /api/stats - 시스템 통계")

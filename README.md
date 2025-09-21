@@ -227,6 +227,86 @@ curl "http://localhost:8000/api/recommendations/user123"
 
 **이 3개 점수로 완벽한 추천 근거 제공!** ✨
 
+## 🏗️ 시스템 아키텍처
+
+### 전체 구조
+```mermaid
+graph TB
+    A[Client/Frontend] --> B[FastAPI Server]
+    B --> C[AnimeRecommendationSystem]
+    C --> D[Kanana Embedding Model]
+    C --> E[User Profile Manager]
+    C --> F[Hybrid Recommender]
+
+    F --> G[Content-Based Filter]
+    F --> H[Collaborative Filter]
+
+    G --> I[Kanana/TF-IDF Vectorizer]
+    H --> J[Item-Item Similarity]
+
+    B --> K[Redis Cache]
+    B --> L[Background Tasks]
+    L --> M[Spring Server Callback]
+
+    N[CSV Data] --> C
+    O[User Interactions] --> E
+```
+
+### 핵심 컴포넌트
+
+#### 1. **추천 엔진 (`AnimeRecommendationSystem`)**
+- **데이터 로딩**: CSV 파일에서 애니메이션 메타데이터 로드
+- **특성 추출**: Kanana 임베딩으로 콘텐츠 벡터화
+- **유저 프로파일링**: liked/disliked 기반 취향 분석
+- **하이브리드 추천**: 콘텐츠+협업 필터링 결합
+
+#### 2. **임베딩 엔진 (`KananaEmbeddingModel`)**
+- **Primary**: 카카오 Kanana 2.1B 모델 (768차원)
+- **Fallback**: TF-IDF + SVD (768차원)
+- **GPU 가속**: CUDA 지원으로 고속 처리
+- **배치 처리**: 메모리 효율적 임베딩 생성
+
+#### 3. **API 서버 (`FastAPI`)**
+- **통합 추천 API**: `/api/recommend` (메인)
+- **Legacy APIs**: 기존 호환성 유지
+- **배치 처리**: 대량 사용자 추천 백그라운드 작업
+- **Redis 캐싱**: 추천 결과 고속 저장/조회
+
+#### 4. **사용자 프로파일 시스템**
+- **입력**: `liked_anime_ids` + `disliked_anime_ids`
+- **변환**: liked=4.5점, disliked=1.5점으로 내부 변환
+- **분석**: 장르/태그 선호도, 시청 패턴 추출
+- **저장**: 메모리 및 Redis 캐시
+
+### 데이터 플로우
+
+#### 추천 생성 과정
+```
+1. User Request → 2. Profile Lookup → 3. Hybrid Algorithm
+                                        ↓
+4. Content Filter ←→ 5. Collaborative Filter
+   (Kanana Embedding)    (Item Similarity)
+                                        ↓
+6. Score Combination → 7. Diversity Filter → 8. Final Ranking
+```
+
+#### 배치 처리 과정
+```
+1. Spring Server → 2. Batch Request → 3. Background Task
+                                        ↓
+4. Process Users → 5. Generate Recommendations → 6. Redis Storage
+                                        ↓
+7. Callback to Spring ← 8. Job Status Update
+```
+
+### 성능 최적화
+
+- **임베딩 캐싱**: 계산된 벡터 메모리 저장
+- **유사도 매트릭스**: 사전 계산된 애니메이션 간 유사도
+- **배치 처리**: 여러 텍스트 동시 임베딩
+- **Redis 캐싱**: 추천 결과 24시간 캐시
+- **GPU 가속**: Kanana 모델 CUDA 활용
+
 ## 📈 성능 특징
 
 - **데이터 규모**: 4,417개 애니메이션 처리
@@ -286,6 +366,48 @@ CSV 파일에는 다음과 같은 컬럼들이 포함되어 있습니다:
 ## 📞 문의 및 기여
 
 이 프로젝트에 대한 문의사항이나 개선 제안이 있으시면 언제든지 연락해 주세요!
+
+## 📝 개발 로그
+
+### 2025-01-21: 시스템 통합 및 개선
+
+#### 🔧 주요 변경사항
+1. **추천 시스템 하이브리드 통일**
+   - 모든 추천 API를 하이브리드 방식으로 통합
+   - 새로운 메인 API: `POST /api/recommend`
+   - Legacy API들은 호환성 유지하며 하이브리드로 리다이렉트
+
+2. **사용자 피드백 시스템 개선**
+   - `liked/disliked` 기반으로 평점 시스템 개선
+   - liked → 4.5점, disliked → 1.5점으로 내부 변환
+   - 기본 평점을 5.0 → 3.0으로 조정 (중간값)
+
+3. **API 구조 개선**
+   ```
+   📍 메인 API (권장)
+   POST /api/recommend                    # 통합 하이브리드 추천
+
+   📍 Legacy APIs (호환성 유지)
+   POST /api/recommend/content            # → 하이브리드로 리다이렉트
+   POST /api/recommend/collaborative      # → 하이브리드로 리다이렉트
+   POST /api/recommend/hybrid            # → 가중치 설정 가능
+
+   📍 프로필 생성
+   POST /api/user/profile                # 기존 방식 (legacy)
+   POST /api/user/profile-ratings        # 평점 기반 (legacy)
+   ```
+
+#### 🎯 개선 효과
+- **일관성 향상**: 모든 추천이 동일한 하이브리드 알고리즘 사용
+- **사용성 개선**: 단일 통합 API로 복잡성 감소
+- **호환성 유지**: 기존 클라이언트 코드 변경 없이 업그레이드 가능
+- **백엔드 연동**: liked/disliked 데이터를 백엔드에서 직접 전달
+
+#### 🚀 다음 단계
+- [ ] liked/disliked 전용 API 구현
+- [ ] 평점 기반 API 제거 고려
+- [ ] 배치 추천 시스템 Spring 연동 테스트
+- [ ] 성능 모니터링 및 최적화
 
 ---
 **Made with ❤️ for Anime Lovers**
