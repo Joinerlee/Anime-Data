@@ -562,13 +562,17 @@ async def process_batch_recommendations(job_id: str, user_updates: List[UserLike
                 if redis_client:
                     redis_key = f"recommendations:{user_id}"
 
-                    # JSON 직렬화 가능하도록 float 변환
+                    # JSON 직렬화 가능하도록 타입 변환
                     serializable_recs = []
                     for rec in recommendations:
                         serializable_rec = rec.copy()
+                        # float 필드 변환
                         for key in ['final_score', 'content_score', 'collab_score', 'similarity_score']:
                             if key in serializable_rec:
                                 serializable_rec[key] = float(serializable_rec[key])
+                        # PostgreSQL int64 필드를 일반 int로 변환
+                        if 'id' in serializable_rec:
+                            serializable_rec['id'] = int(serializable_rec['id'])
                         serializable_recs.append(serializable_rec)
 
                     redis_client.setex(
