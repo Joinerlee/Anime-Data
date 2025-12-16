@@ -129,6 +129,154 @@ def test_pgvector():
         logger.error(f"pgvector 테스트 실패: {e}")
         return False
 
+def get_animes_without_embedding(session=None):
+    """
+    임베딩이 없는 애니메이션 조회
+
+    Args:
+        session: SQLAlchemy session (optional, creates one if not provided)
+
+    Returns:
+        List of Animation objects without content_embedding
+    """
+    from models import Animation
+    from sqlalchemy import select
+
+    close_session = False
+    if session is None:
+        session = SyncSessionLocal()
+        close_session = True
+
+    try:
+        stmt = select(Animation).where(Animation.content_embedding.is_(None))
+        result = session.execute(stmt)
+        animes = result.scalars().all()
+        logger.info(f"Found {len(animes)} animations without embeddings")
+        return animes
+    except Exception as e:
+        logger.error(f"Error fetching animations without embedding: {e}")
+        raise
+    finally:
+        if close_session:
+            session.close()
+
+
+def save_embedding(anime_id: int, embedding, session=None):
+    """
+    단일 애니메이션의 임베딩 저장 (pgvector 형식)
+
+    Args:
+        anime_id: Animation ID
+        embedding: numpy array or list of embedding values
+        session: SQLAlchemy session (optional, creates one if not provided)
+
+    Returns:
+        True if successful, False otherwise
+    """
+    from models import Animation
+    from sqlalchemy import select
+    from datetime import datetime
+    import numpy as np
+
+    close_session = False
+    if session is None:
+        session = SyncSessionLocal()
+        close_session = True
+
+    try:
+        # 애니메이션 조회
+        stmt = select(Animation).where(Animation.id == anime_id)
+        result = session.execute(stmt)
+        anime = result.scalar_one_or_none()
+
+        if not anime:
+            logger.warning(f"Animation with id {anime_id} not found")
+            return False
+
+        # numpy array를 list로 변환 (pgvector가 자동으로 처리)
+        if isinstance(embedding, np.ndarray):
+            embedding = embedding.tolist()
+
+        # 임베딩 저장
+        anime.content_embedding = embedding
+        anime.embedding_updated_at = datetime.utcnow()
+
+        if close_session:
+            session.commit()
+
+        logger.debug(f"Saved embedding for anime_id={anime_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving embedding for anime_id={anime_id}: {e}")
+        if close_session:
+            session.rollback()
+        raise
+    finally:
+        if close_session:
+            session.close()
+
+
+def vector_search(embedding, limit: int = 10, session=None, min_similarity: float = 0.0):
+    """
+    pgvector를 사용한 유사도 검색
+
+    Args:
+        embedding: numpy array or list of embedding values (768 dimensions)
+        limit: 반환할 최대 결과 수
+        session: SQLAlchemy session (optional, creates one if not provided)
+        min_similarity: 최소 유사도 임계값 (0~1)
+
+    Returns:
+        List of tuples: (Animation object, similarity_score)
+    """
+    from models import Animation
+    from sqlalchemy import select, func
+    import numpy as np
+
+    close_session = False
+    if session is None:
+        session = SyncSessionLocal()
+        close_session = True
+
+    try:
+        # numpy array를 list로 변환
+        if isinstance(embedding, np.ndarray):
+            embedding = embedding.tolist()
+
+        # pgvector 코사인 거리 검색
+        # <=> 연산자는 코사인 거리 (1 - cosine_similarity)
+        # 따라서 거리가 작을수록 유사도가 높음
+        stmt = select(
+            Animation,
+            (1 - Animation.content_embedding.cosine_distance(embedding)).label('similarity')
+        ).where(
+            Animation.content_embedding.isnot(None)
+        ).order_by(
+            Animation.content_embedding.cosine_distance(embedding)
+        ).limit(limit)
+
+        result = session.execute(stmt)
+        results = result.all()
+
+        # 최소 유사도 필터링
+        filtered_results = [
+            (anime, float(similarity))
+            for anime, similarity in results
+            if float(similarity) >= min_similarity
+        ]
+
+        logger.info(f"Found {len(filtered_results)} similar animations (min_similarity={min_similarity})")
+        return filtered_results
+
+    except Exception as e:
+        logger.error(f"Error during vector search: {e}")
+        raise
+    finally:
+        if close_session:
+            session.close()
+
+
 if __name__ == "__main__":
     """
     데이터베이스 설정 테스트
