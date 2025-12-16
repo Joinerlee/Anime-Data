@@ -36,10 +36,16 @@ class Animation(Base):
     average_rating = Column(Float, default=0.0)    # 평균 평점
     total_ratings = Column(Integer, default=0)     # 총 평점 수
 
+    # 포스터 관련 필드
+    poster_url = Column(String(500), nullable=True)  # 외부 포스터 URL
+    poster_local_path = Column(String(500), nullable=True)  # 로컬 저장 경로
+    poster_thumbnail_url = Column(String(500), nullable=True)  # 썸네일 URL
+
     # 임베딩 벡터 (pgvector)
     content_embedding = Column(Vector(768), nullable=True)  # Kanana 임베딩
     genre_embedding = Column(Vector(256), nullable=True)    # 장르 임베딩
     synopsis_embedding = Column(Vector(768), nullable=True)  # 줄거리 임베딩
+    embedding_updated_at = Column(DateTime, nullable=True)  # 임베딩 업데이트 시간
 
     # 메타데이터
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -71,6 +77,9 @@ class Animation(Base):
             'popularity_score': self.popularity_score,
             'average_rating': self.average_rating,
             'total_ratings': self.total_ratings,
+            'poster_url': self.poster_url,
+            'poster_local_path': self.poster_local_path,
+            'poster_thumbnail_url': self.poster_thumbnail_url,
         }
 
 class UserPreference(Base):
